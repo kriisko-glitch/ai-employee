@@ -1,0 +1,131 @@
+# =============================================================================
+# AI Employee — agent configuration
+# =============================================================================
+# Copy this file to agents/<name>/agent.yaml and customize.
+# Every section is independently toggleable. Comment out what you don't need.
+# =============================================================================
+
+name: example
+workspace: agents/example   # relative to repo root, or absolute path
+
+# -----------------------------------------------------------------------------
+# MODEL — any OpenAI-compatible provider
+# -----------------------------------------------------------------------------
+# The OpenAI Chat Completions API has become the universal interface.
+# Pick a provider; set the api_key_env to match a variable in your .env.
+# See docs/PROVIDERS.md for per-provider notes.
+# -----------------------------------------------------------------------------
+model:
+  provider: openai          # openai | anthropic | deepseek | groq | cerebras | openrouter | local | custom
+  model_id: gpt-4o-mini     # provider-specific model identifier
+  api_key_env: OPENAI_API_KEY
+  # base_url: null          # leave null for provider default; override for custom endpoints
+  temperature: 0.7
+  max_tokens: 2048
+  timeout_seconds: 120
+
+# -----------------------------------------------------------------------------
+# HEARTBEAT — autonomous tick loop (OFF by default)
+# -----------------------------------------------------------------------------
+# When enabled, the agent runs independently of human invocation.
+# Set enabled: false for a purely stateless / on-demand agent.
+# -----------------------------------------------------------------------------
+heartbeat:
+  enabled: false
+
+  cadence:
+    min_seconds: 60         # floor — never tick faster than this
+    max_seconds: 1800       # ceiling — never wait longer than this
+    default_seconds: 300    # initial delay at boot
+
+  modulation:
+    # Modulate cadence based on user activity around the workspace.
+    # When the user is active, tick faster. When idle, tick slower.
+    enabled: true
+    signals:
+      - filesystem          # watch workspace + parent mtimes
+      - git                 # recent commits in the workspace
+    active_window_minutes: 5   # activity within this window = "active"
+    idle_window_minutes: 60    # no activity for this long = "idle"
+    active_multiplier: 0.5     # active: next delay × 0.5
+    idle_multiplier: 2.0       # idle:   next delay × 2.0
+
+  budget:
+    # Hard daily kill-switch. The loop exits when today's spend exceeds the cap.
+    # Pricing varies per provider/model — set these from current rate cards.
+    daily_usd_cap: 5.00
+    per_tick_token_cap: 4000
+    pricing:
+      input_per_1m_usd: 0.15    # cost per 1M input tokens
+      output_per_1m_usd: 0.60   # cost per 1M output tokens
+
+# -----------------------------------------------------------------------------
+# MEMORY — long-term, valence-tagged retrieval (ON by default)
+# -----------------------------------------------------------------------------
+# Set enabled: false for ephemeral agents.
+# Backend "none" keeps MEMORY.md as the only persistence (no vector store).
+# -----------------------------------------------------------------------------
+memory:
+  enabled: true
+
+  storage:
+    backend: sqlite_vec     # sqlite_vec | none
+    db_filename: memory.db  # relative to workspace
+    embedding:
+      model: BAAI/bge-small-en-v1.5  # any sentence-transformers model
+      dim: 384
+      device: auto          # auto | cpu | cuda | mps
+
+  parameterization:
+    # Memories are labeled to teach the agent what worked vs. didn't.
+    # Retrieval re-scores chunks by valence before returning top-K.
+    valence_labels:
+      - hit                 # approach worked / claim validated
+      - miss                # approach failed / claim wrong — don't repeat
+      - walkback            # earlier claim retracted — calibration learning
+      - unmarked            # default / not yet labeled
+
+    auto_tag:
+      enabled: true         # heuristic regex tagger on ingest
+      mode: keyword         # keyword | llm | hybrid
+
+    retrieval:
+      top_k: 8
+      boost_hits: 1.5       # hit chunks scored ×1.5 at recall
+      suppress_misses: 0.3  # miss chunks scored ×0.3 (still surface as warnings)
+      walkback_weight: 1.2  # walkbacks weighted ×1.2 (learning gold)
+
+    decay:
+      enabled: true
+      half_life_days: 30    # untouched memories halve in retrieval weight
+
+  consolidation:
+    # Periodic "sleep" — distill recent thoughts to MEMORY.md.
+    enabled: true
+    trigger_session_bytes: 3000000   # consolidate when session log exceeds this
+    keep_diff_log: true              # write what was kept vs dropped
+
+# -----------------------------------------------------------------------------
+# TRANSPORT — where the agent posts output
+# -----------------------------------------------------------------------------
+transport:
+  kind: stdout              # stdout | discord | webhook
+
+  # Discord webhook (uncomment if kind: discord)
+  # discord:
+  #   webhook_url_env: DISCORD_WEBHOOK_URL
+  #   username: example
+
+  # Generic POST webhook (uncomment if kind: webhook)
+  # webhook:
+  #   url_env: GENERIC_WEBHOOK_URL
+  #   format: json          # json | text
+
+# -----------------------------------------------------------------------------
+# SAFETY — tier system + stop/freeze flags
+# -----------------------------------------------------------------------------
+safety:
+  tier: 1                   # 0=read-only, 1=draft-only, 2=supervised, 3=trusted, 4=autonomous
+  drafts_dir: drafts        # relative to workspace
+  stop_flag: STOP           # filename in workspace; presence halts the loop
+  freeze_flag: FREEZE       # filename in workspace; presence pauses writes but keeps the loop

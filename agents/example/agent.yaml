@@ -1,0 +1,44 @@
+# Example agent — stateless, on-demand. Edit to taste.
+# Full reference: ../../agent.yaml.example
+
+name: example
+workspace: agents/example
+
+model:
+  provider: openai
+  model_id: gpt-4o-mini
+  api_key_env: OPENAI_API_KEY
+  temperature: 0.7
+  max_tokens: 2048
+
+heartbeat:
+  enabled: false            # flip to true to start the autonomous loop
+  cadence:
+    min_seconds: 60
+    max_seconds: 1800
+    default_seconds: 300
+  modulation:
+    enabled: true
+  budget:
+    daily_usd_cap: 5.00
+    pricing:
+      input_per_1m_usd: 0.15   # gpt-4o-mini input rate (verify against current rate card)
+      output_per_1m_usd: 0.60  # gpt-4o-mini output rate
+
+memory:
+  enabled: true
+  storage:
+    backend: sqlite_vec
+    embedding:
+      model: BAAI/bge-small-en-v1.5
+  parameterization:
+    retrieval:
+      top_k: 8
+      boost_hits: 1.5
+      suppress_misses: 0.3
+
+transport:
+  kind: stdout
+
+safety:
+  tier: 1

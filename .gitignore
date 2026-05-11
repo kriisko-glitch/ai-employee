@@ -1,0 +1,54 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Per-agent runtime state (never commit)
+agents/*/state.json
+agents/*/memory.db
+agents/*/memory.db-*
+agents/*/STOP
+agents/*/FREEZE
+agents/*/drafts/
+agents/*/budget.json
+agents/*/.session/
+
+# Allow the example skeleton
+!agents/example/SOUL.md
+!agents/example/MEMORY.md
+!agents/example/agent.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+.venv/
+venv/
+
+# uv
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Models / caches
+.cache/
+models/
+*.bin
+*.safetensors
+
+# Logs
+*.log
+logs/
