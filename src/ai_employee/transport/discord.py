@@ -12,6 +12,10 @@ from typing import Optional
 
 DISCORD_MAX_CONTENT = 2000  # Discord message length cap
 
+# Discord's Cloudflare rejects Python-urllib's default UA with 403.
+# Any descriptive UA string works; this one identifies the project.
+USER_AGENT = "ai-employee/0.1 (+https://github.com/kriisko-glitch/ai-employee)"
+
 
 class DiscordTransport:
     def __init__(self, webhook_url_env: str = "DISCORD_WEBHOOK_URL",
@@ -34,7 +38,10 @@ class DiscordTransport:
             req = urllib.request.Request(
                 self.webhook_url,
                 data=data,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": USER_AGENT,
+                },
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=30) as resp:
