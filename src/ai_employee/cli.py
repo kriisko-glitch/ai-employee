@@ -53,6 +53,18 @@ def _setup_logging() -> None:
     )
 
 
+def _ensure_utf8_stdout() -> None:
+    """Force stdout/stderr to UTF-8 so Unicode glyphs don't blow up on
+    Windows' default cp1252 console. No-op on platforms where reconfigure
+    isn't available or isn't needed.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
+
+
 # --- commands ---------------------------------------------------------------
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -63,19 +75,33 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 1
     example = repo_root / "agents" / "example"
     if example.exists():
-        shutil.copytree(example, target)
+        # Skip agent.yaml during copy — it gets rewritten from the template
+        # below with name/workspace substituted for this agent.
+        shutil.copytree(
+            example, target,
+            ignore=shutil.ignore_patterns("agent.yaml", "state.json",
+                                          "memory.db*", "budget.json",
+                                          "STOP", "FREEZE", "drafts"),
+        )
     else:
         target.mkdir(parents=True)
-    # Copy/customize agent.yaml.example.
+
+    # Write a fresh agent.yaml for this agent. Prefer the top-level
+    # agent.yaml.example as the template; fall back to agents/example/agent.yaml.
     example_yaml = repo_root / "agent.yaml.example"
-    if example_yaml.exists() and not (target / "agent.yaml").exists():
-        content = example_yaml.read_text(encoding="utf-8")
-        content = content.replace("name: example", f"name: {args.name}")
-        content = content.replace(
+    template = (
+        example_yaml.read_text(encoding="utf-8") if example_yaml.exists()
+        else (example / "agent.yaml").read_text(encoding="utf-8")
+        if (example / "agent.yaml").exists() else ""
+    )
+    if template:
+        rendered = template.replace("name: example", f"name: {args.name}")
+        rendered = rendered.replace(
             "workspace: agents/example",
             f"workspace: agents/{args.name}",
         )
-        (target / "agent.yaml").write_text(content, encoding="utf-8")
+        (target / "agent.yaml").write_text(rendered, encoding="utf-8")
+
     print(f"scaffolded {target}")
     print(f"next: edit {target / 'agent.yaml'} and {target / 'SOUL.md'}")
     return 0
@@ -199,6 +225,7 @@ def cmd_attempt(args: argparse.Namespace) -> int:
 # --- entry point ------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
+    _ensure_utf8_stdout()
     load_dotenv()  # read .env from cwd or upward
     _setup_logging()
 

@@ -163,17 +163,25 @@ def vec_search(conn: sqlite3.Connection, query_vec: list[float],
                top_k: int = 20) -> list[sqlite3.Row]:
     """kNN over chunk_vec. Returns chunk rows joined with their cosine distance.
 
-    Note: sqlite-vec returns L2 distance by default on normalized vectors,
-    which is monotone with (1 - cosine) — small distance = more similar.
+    Note: sqlite-vec returns L2 distance on normalized vectors, which is
+    monotone with (1 - cosine) — small distance = more similar.
+
+    sqlite-vec >= 0.1.9 requires the kNN-defining LIMIT to live on the vec0
+    virtual-table scan itself, not on the outer JOIN, hence the CTE.
     """
     rows = conn.execute(
         """
-        SELECT c.*, v.distance
-        FROM chunk_vec v
-        JOIN chunk c ON c.id = v.rowid
-        WHERE v.embedding MATCH ?
-        ORDER BY v.distance
-        LIMIT ?
+        WITH knn AS (
+            SELECT rowid, distance
+            FROM chunk_vec
+            WHERE embedding MATCH ?
+            ORDER BY distance
+            LIMIT ?
+        )
+        SELECT c.*, knn.distance
+        FROM knn
+        JOIN chunk c ON c.id = knn.rowid
+        ORDER BY knn.distance
         """,
         (_pack_vec(query_vec), top_k),
     ).fetchall()

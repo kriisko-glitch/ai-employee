@@ -43,6 +43,9 @@ uv.lock
 .DS_Store
 Thumbs.db
 
+# Claude Code worktrees + per-session state
+.claude/
+
 # Models / caches
 .cache/
 models/

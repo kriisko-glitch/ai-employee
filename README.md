@@ -11,26 +11,30 @@ Everything lives in one `agent.yaml` per agent. No hidden state, no vendor lock-
 ## Quick start
 
 ```bash
-git clone https://github.com/<your-org>/ai-employee.git
+git clone https://github.com/kriisko-glitch/ai-employee.git
 cd ai-employee
 
-# Install (uv recommended; pip works too)
-uv sync                                  # or: pip install -e ".[memory,dev]"
+# Install with the memory extras (sqlite-vec + sentence-transformers).
+# Memory is on by default, so the [memory] extra is the recommended path.
+pip install -e ".[memory]"               # or: uv sync --extra memory
 
 # Configure
 cp .env.example .env                     # paste API keys
-cp agent.yaml.example agents/example/agent.yaml
 
-# One-shot tick (stateless test)
-uv run aie tick example
+# The example agent is already scaffolded at agents/example/.
+# Edit agents/example/agent.yaml to pick your provider, then:
 
-# Long-running heartbeat (autonomous loop)
-uv run aie run example
+aie tick example                         # one-shot stateless tick
+aie status example                       # state + budget snapshot
+aie recall example "what did I learn?"   # search memory
 
-# Status / inspection
-uv run aie status example
-uv run aie recall example "what did I learn about X?"
+# Scaffold a new agent of your own:
+aie init my-agent
+# Edit agents/my-agent/agent.yaml and agents/my-agent/SOUL.md, then:
+aie tick my-agent
 ```
+
+**Windows users:** if you see a `UnicodeEncodeError` on output, you're on the cp1252 default console. Recent versions of `aie` reconfigure stdout to UTF-8 automatically, but if you're on an older clone, run `chcp 65001` once per session or set `PYTHONIOENCODING=utf-8`.
 
 ---
 
@@ -168,15 +172,17 @@ With `modulation.enabled: true`, the delay is shortened when the user is active 
 ## Install
 
 ```bash
-# uv (recommended)
-uv sync                          # core + memory + dev
-uv sync --no-dev                 # production
-uv sync --extra memory           # explicit
-
-# pip
-pip install -e .                 # core only (no memory DB)
+# Recommended (memory is on by default, so install with extras):
 pip install -e ".[memory]"       # + sqlite-vec + sentence-transformers
 pip install -e ".[memory,dev]"   # + pytest
+
+# uv equivalents:
+uv sync --extra memory
+uv sync                          # core + memory + dev (uses [all])
+
+# Bare-metal core only — only useful if you've also flipped
+# `memory.enabled: false` in every agent.yaml.
+pip install -e .
 ```
 
 Python 3.11+. Cross-platform (macOS, Linux, Windows). Memory backend uses `sqlite-vec` and `sentence-transformers` (CPU works fine; Apple Silicon gets MPS acceleration automatically).
