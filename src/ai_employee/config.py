@@ -123,6 +123,27 @@ class DecayConfig:
 
 
 @dataclass
+class DriveBiasConfig:
+    """State → SDT bias mapping. When the agent is in a state listed under
+    `competence_states`, retrieval is biased toward chunks with high
+    `competence` scores. Same pattern for autonomy/relatedness.
+
+    This is the meso-limbic layer: current drive state shapes attention.
+    """
+    enabled: bool = True
+    bias_strength: float = 0.5
+    competence_states: list[str] = field(
+        default_factory=lambda: ["BUILDING", "WORKING", "CODING", "TESTING", "SHIPPING"]
+    )
+    autonomy_states: list[str] = field(
+        default_factory=lambda: ["BOREDOM", "IDLE", "REFLECTING", "IDEATING", "WANDERING"]
+    )
+    relatedness_states: list[str] = field(
+        default_factory=lambda: ["WAKING", "CONVERSING", "RESPONDING", "LISTENING"]
+    )
+
+
+@dataclass
 class ParameterizationConfig:
     valence_labels: list[str] = field(
         default_factory=lambda: ["hit", "miss", "walkback", "unmarked"]
@@ -130,6 +151,7 @@ class ParameterizationConfig:
     auto_tag: AutoTagConfig = field(default_factory=AutoTagConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     decay: DecayConfig = field(default_factory=DecayConfig)
+    drive_bias: DriveBiasConfig = field(default_factory=DriveBiasConfig)
 
 
 @dataclass
@@ -145,6 +167,54 @@ class MemoryConfig:
     storage: StorageConfig = field(default_factory=StorageConfig)
     parameterization: ParameterizationConfig = field(default_factory=ParameterizationConfig)
     consolidation: ConsolidationConfig = field(default_factory=ConsolidationConfig)
+
+
+# --- conversation (working memory) -----------------------------------------
+
+@dataclass
+class CompactConfig:
+    """Sleep/dreaming threshold + behaviour."""
+    threshold_bytes: int = 1_000_000
+    on_compact: str = "sleep_consolidate"  # sleep_consolidate | truncate
+
+
+@dataclass
+class ConversationConfig:
+    """JSONL working memory across ticks. Cleared at sleep."""
+    enabled: bool = False
+    history_filename: str = "conversation.jsonl"
+    max_turns_in_prompt: int = 20  # how many recent turns to surface
+    compact: CompactConfig = field(default_factory=CompactConfig)
+
+
+# --- discord listener (inbound channel polling) ----------------------------
+
+@dataclass
+class DiscordListenerConfig:
+    """Poll a Discord channel for inbound messages from a watched user.
+
+    When enabled, each tick fetches recent messages and includes them in the
+    prompt. The agent decides whether to respond. Cadence is also modulated
+    by channel activity (see CadenceConfig).
+    """
+    enabled: bool = False
+    channel_id: int = 0
+    bot_token_env: str = "DISCORD_BOT_TOKEN"
+    user_id_to_watch: int = 0  # 0 = watch everyone
+    recent_message_count: int = 8
+
+
+# --- activity cadence ------------------------------------------------------
+
+@dataclass
+class DiscordCadenceConfig:
+    """Speed-up tiers when the watched user is active in the channel."""
+    active_within_minutes: int = 2
+    active_delay_seconds: int = 15
+    recent_within_minutes: int = 5
+    recent_delay_seconds: int = 30
+    pulse_within_minutes: int = 15
+    pulse_delay_seconds: int = 60
 
 
 # --- transport --------------------------------------------------------------
@@ -189,6 +259,9 @@ class AgentConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     transport: TransportConfig = field(default_factory=TransportConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    conversation: ConversationConfig = field(default_factory=ConversationConfig)
+    discord_listener: DiscordListenerConfig = field(default_factory=DiscordListenerConfig)
+    discord_cadence: DiscordCadenceConfig = field(default_factory=DiscordCadenceConfig)
 
     # Derived workspace paths
     @property
@@ -222,6 +295,15 @@ class AgentConfig:
     @property
     def budget_file(self) -> Path:
         return self.workspace / "budget.json"
+
+    @property
+    def conversation_file(self) -> Path:
+        return self.workspace / self.conversation.history_filename
+
+    @property
+    def last_seen_file(self) -> Path:
+        """Tracks the most recent Discord message ID we've already processed."""
+        return self.workspace / "last_seen.json"
 
 
 # --- loader -----------------------------------------------------------------
@@ -287,8 +369,20 @@ def load_agent_config(config_path: Path, repo_root: Optional[Path] = None) -> Ag
         memory=_build_memory(data.get("memory") or {}),
         transport=_build_transport(data.get("transport") or {}),
         safety=build(SafetyConfig, "safety"),
+        conversation=_build_conversation(data.get("conversation") or {}),
+        discord_listener=_merge_dataclass(DiscordListenerConfig, data.get("discord_listener")),
+        discord_cadence=_merge_dataclass(DiscordCadenceConfig, data.get("discord_cadence")),
     )
     return cfg
+
+
+def _build_conversation(d: dict) -> ConversationConfig:
+    return ConversationConfig(
+        enabled=d.get("enabled", False),
+        history_filename=d.get("history_filename", "conversation.jsonl"),
+        max_turns_in_prompt=d.get("max_turns_in_prompt", 20),
+        compact=_merge_dataclass(CompactConfig, d.get("compact")),
+    )
 
 
 def _build_heartbeat(d: dict) -> HeartbeatConfig:

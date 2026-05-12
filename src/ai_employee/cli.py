@@ -205,6 +205,53 @@ def cmd_tag(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sleep(args: argparse.Namespace) -> int:
+    """Force a DREAMING tick — distill conversation into memory now."""
+    cfg = _load(args.name)
+    if not cfg.conversation.enabled:
+        sys.exit("error: conversation.enabled is false in agent.yaml — "
+                 "nothing to consolidate")
+    from .heartbeat.tick import _run_dream_tick
+    from .runner import build_runner
+    from .heartbeat.budget import BudgetTracker
+    from .heartbeat.state import load_state
+    runner = build_runner(cfg.model)
+    tracker = BudgetTracker(cfg.budget_file, cfg.heartbeat.budget)
+    state = load_state(cfg.state_file, cfg.heartbeat.cadence.default_seconds)
+    new = _run_dream_tick(cfg, runner, tracker, state, frozen=False)
+    print(f"[ok] dreamed. state={new['state']} wake_pending={new.get('wake_pending')}")
+    print(f"     conversation cleared. next tick will be WAKING.")
+    return 0
+
+
+def cmd_wake_context(args: argparse.Namespace) -> int:
+    """Preview what the wake-context block would look like right now."""
+    cfg = _load(args.name)
+    if not cfg.memory.enabled:
+        sys.exit("error: memory is disabled in agent.yaml")
+    from .memory.wake import build_wake_context
+    print(build_wake_context(cfg))
+    return 0
+
+
+def cmd_conversation(args: argparse.Namespace) -> int:
+    """Show the recent conversation history (working memory)."""
+    cfg = _load(args.name)
+    from .conversation import load_recent, size_bytes
+    turns = load_recent(cfg.conversation_file, args.tail)
+    print(f"conversation: {cfg.conversation_file}")
+    print(f"size: {size_bytes(cfg.conversation_file):,} bytes "
+          f"(threshold {cfg.conversation.compact.threshold_bytes:,})")
+    print(f"turns: {len(turns)}")
+    print()
+    for t in turns:
+        body = t.content.replace("\n", " ")
+        if len(body) > 200:
+            body = body[:197] + "..."
+        print(f"[{t.ts[:19]}] {t.role:9s} ({t.source or '?'}): {body}")
+    return 0
+
+
 def cmd_attempt(args: argparse.Namespace) -> int:
     cfg = _load(args.name)
     if not cfg.memory.enabled:
@@ -280,6 +327,22 @@ def main(argv: list[str] | None = None) -> int:
                            choices=["hit", "miss", "walkback"])
     p_attempt.add_argument("--lesson", default=None)
     p_attempt.set_defaults(func=cmd_attempt)
+
+    p_sleep = sub.add_parser("sleep",
+                              help="force a DREAMING tick (distill conversation into memory)")
+    p_sleep.add_argument("name")
+    p_sleep.set_defaults(func=cmd_sleep)
+
+    p_wake = sub.add_parser("wake-context",
+                             help="preview the wake-context block")
+    p_wake.add_argument("name")
+    p_wake.set_defaults(func=cmd_wake_context)
+
+    p_conv = sub.add_parser("conversation",
+                             help="show recent conversation history (working memory)")
+    p_conv.add_argument("name")
+    p_conv.add_argument("--tail", type=int, default=20)
+    p_conv.set_defaults(func=cmd_conversation)
 
     args = parser.parse_args(argv)
     return args.func(args)

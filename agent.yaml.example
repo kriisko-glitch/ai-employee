@@ -99,11 +99,73 @@ memory:
       enabled: true
       half_life_days: 30    # untouched memories halve in retrieval weight
 
+    # SDT (Self-Determination Theory) drive bias — the meso-limbic layer.
+    # The agent's current state biases retrieval toward chunks scoring high
+    # on the matching SDT axis. BUILDING states pull competence-flagged
+    # memories; idle/BOREDOM pulls autonomy; WAKING/CONVERSING pulls
+    # relatedness. This is what gives the agent a felt direction across
+    # sessions rather than only reacting to whatever is most recent.
+    drive_bias:
+      enabled: true
+      bias_strength: 0.5
+      competence_states: [BUILDING, WORKING, CODING, TESTING, SHIPPING]
+      autonomy_states:   [BOREDOM, IDLE, REFLECTING, IDEATING, WANDERING]
+      relatedness_states: [WAKING, CONVERSING, RESPONDING, LISTENING]
+
   consolidation:
     # Periodic "sleep" — distill recent thoughts to MEMORY.md.
     enabled: true
     trigger_session_bytes: 3000000   # consolidate when session log exceeds this
     keep_diff_log: true              # write what was kept vs dropped
+
+# -----------------------------------------------------------------------------
+# CONVERSATION — working memory across ticks (v0.2)
+# -----------------------------------------------------------------------------
+# When enabled, the agent maintains a JSONL conversation history at
+# <workspace>/conversation.jsonl. Each tick appends (user, assistant) turns.
+# The model sees the recent N turns each tick so it doesn't restart cold.
+#
+# When the file crosses `compact.threshold_bytes`, the next tick is a
+# DREAMING tick: the model distills the session into SDT-scored chunks in
+# the vector DB, appends carry-forward to MEMORY.md, then the history is
+# cleared. The next tick after that is a WAKING tick — a grace period where
+# the agent reads the wake context and posts a brief acknowledgement.
+# -----------------------------------------------------------------------------
+conversation:
+  enabled: false              # opt-in — needed for continuous-presence agents
+  history_filename: conversation.jsonl
+  max_turns_in_prompt: 20     # how many recent turns to include each tick
+  compact:
+    threshold_bytes: 1000000  # ~1MB — when history crosses this, DREAMING fires
+    on_compact: sleep_consolidate
+
+# -----------------------------------------------------------------------------
+# DISCORD LISTENER — inbound channel polling (v0.2)
+# -----------------------------------------------------------------------------
+# When enabled, each tick fetches the recent channel messages via the bot
+# API. New messages from `user_id_to_watch` get included in the prompt;
+# the agent decides whether to respond. Cadence is also modulated below.
+# -----------------------------------------------------------------------------
+discord_listener:
+  enabled: false
+  channel_id: 0               # the Discord channel ID to watch
+  bot_token_env: DISCORD_BOT_TOKEN
+  user_id_to_watch: 0         # the user ID whose messages trigger faster cadence; 0 = anyone
+  recent_message_count: 8
+
+# -----------------------------------------------------------------------------
+# DISCORD CADENCE — faster ticks when watched user is active (v0.2)
+# -----------------------------------------------------------------------------
+# When the listener detects recent messages, the next-tick delay is floored
+# at these values so the agent responds inline within the same conversation.
+# -----------------------------------------------------------------------------
+discord_cadence:
+  active_within_minutes: 2
+  active_delay_seconds: 15    # active conversation → tick in 15s
+  recent_within_minutes: 5
+  recent_delay_seconds: 30    # user posted recently → tick in 30s
+  pulse_within_minutes: 15
+  pulse_delay_seconds: 60     # user may come back → tick in 60s
 
 # -----------------------------------------------------------------------------
 # TRANSPORT — where the agent posts output

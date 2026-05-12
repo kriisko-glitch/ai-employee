@@ -20,7 +20,13 @@ class RunResult:
 
 
 class Runner(Protocol):
-    """A model runner. Implementations: OpenAICompatibleRunner, plus any mocks."""
+    """A model runner. Implementations: OpenAICompatibleRunner, plus any mocks.
 
-    def run(self, system: str, user: str) -> RunResult:
+    The `history` parameter is an optional list of {role, content} dicts in
+    OpenAI chat format. Stateless runners can ignore it; stateful runners
+    use it to maintain conversation continuity across ticks.
+    """
+
+    def run(self, system: str, user: str,
+            history: list[dict] | None = None) -> RunResult:
         ...

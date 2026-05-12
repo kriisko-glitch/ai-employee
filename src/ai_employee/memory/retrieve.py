@@ -44,15 +44,49 @@ def _valence_weight(valence: str, config: MemoryConfig) -> float:
     }.get(valence, 1.0)
 
 
+def _drive_match(chunk_row, current_state: str | None,
+                 config: MemoryConfig) -> float:
+    """Meso-limbic bias — the agent's current state shapes what surfaces.
+
+    BUILDING state biases retrieval toward chunks with high competence.
+    IDLE/BOREDOM biases toward high autonomy.
+    WAKING/CONVERSING biases toward high relatedness.
+
+    Returns a multiplier in [1.0, 1 + bias_strength].
+    """
+    bias = config.parameterization.drive_bias
+    if not bias.enabled or not current_state:
+        return 1.0
+
+    state_upper = current_state.upper()
+
+    if state_upper in (s.upper() for s in bias.competence_states):
+        axis_val = chunk_row["competence"] if "competence" in chunk_row.keys() else 0.0
+    elif state_upper in (s.upper() for s in bias.autonomy_states):
+        axis_val = chunk_row["autonomy"] if "autonomy" in chunk_row.keys() else 0.0
+    elif state_upper in (s.upper() for s in bias.relatedness_states):
+        axis_val = chunk_row["relatedness"] if "relatedness" in chunk_row.keys() else 0.0
+    else:
+        return 1.0
+
+    try:
+        return 1.0 + bias.bias_strength * float(axis_val)
+    except (TypeError, ValueError):
+        return 1.0
+
+
 def retrieve(
     db_file: Path,
     query: str,
     config: MemoryConfig,
+    current_state: str | None = None,
 ) -> list[dict]:
-    """Search memory; return top-K chunks ordered by valence-and-decay-weighted score.
+    """Search memory; return top-K chunks ranked by:
 
-    Score formula: sim × valence_weight × decay_factor, where
-    sim = max(0, 1 - vec_distance) (sqlite-vec returns L2 on normalized vecs).
+        score = similarity × valence_weight × decay × drive_match
+
+    where drive_match biases the result toward chunks whose SDT axis
+    matches the agent's current state (meso-limbic attention).
     """
     if not db_file.exists():
         return []
@@ -78,7 +112,8 @@ def retrieve(
                 else 1.0
             )
             vw = _valence_weight(row["valence"], config)
-            score = sim * vw * decay
+            dm = _drive_match(row, current_state, config)
+            score = sim * vw * decay * dm
             scored.append((score, dict(row)))
 
         scored.sort(key=lambda x: x[0], reverse=True)

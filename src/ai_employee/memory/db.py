@@ -46,7 +46,12 @@ def connect(db_file: Path) -> sqlite3.Connection:
 
 
 def init_schema(conn: sqlite3.Connection, embedding_dim: int) -> None:
-    """Create tables if they don't exist."""
+    """Create tables if they don't exist + migrate existing chunk tables to v0.2.
+
+    v0.2 adds SDT drive axes (autonomy / competence / relatedness) to every
+    chunk. These are the meso-limbic dopamine layer: at retrieval time, the
+    agent's current state biases recall toward drive-matched chunks.
+    """
     conn.executescript(f"""
     CREATE TABLE IF NOT EXISTS chunk (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,6 +61,9 @@ def init_schema(conn: sqlite3.Connection, embedding_dim: int) -> None:
         body            TEXT NOT NULL,
         valence         TEXT NOT NULL DEFAULT '{VALENCE_UNMARKED}',
         weight          REAL NOT NULL DEFAULT 0.5,
+        autonomy        REAL NOT NULL DEFAULT 0.0,    -- 0-1; self-direction score
+        competence      REAL NOT NULL DEFAULT 0.0,    -- 0-1; skill/execution score
+        relatedness     REAL NOT NULL DEFAULT 0.0,    -- 0-1; connection score
         embedding_model TEXT NOT NULL,
         last_recalled_ts TEXT,
         recall_count    INTEGER NOT NULL DEFAULT 0,
@@ -82,7 +90,26 @@ def init_schema(conn: sqlite3.Connection, embedding_dim: int) -> None:
         ts          TEXT NOT NULL,
         reason      TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS sleep_event (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts              TEXT NOT NULL,
+        history_bytes   INTEGER NOT NULL,
+        moments_stored  INTEGER NOT NULL,
+        summary         TEXT,
+        carry_forward   TEXT
+    );
+    CREATE INDEX IF NOT EXISTS sleep_event_ts_idx ON sleep_event(ts DESC);
     """)
+
+    # Migrate existing v0.1 chunk tables — add SDT columns if missing.
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(chunk)").fetchall()}
+    for col in ("autonomy", "competence", "relatedness"):
+        if col not in existing_cols:
+            conn.execute(
+                f"ALTER TABLE chunk ADD COLUMN {col} REAL NOT NULL DEFAULT 0.0"
+            )
+
     # sqlite-vec virtual table — separate because it needs the extension loaded.
     conn.execute(f"""
         CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vec USING vec0(
@@ -101,15 +128,26 @@ def insert_chunk(
     valence: str = VALENCE_UNMARKED,
     weight: float = 0.5,
     ts: Optional[str] = None,
+    autonomy: float = 0.0,
+    competence: float = 0.0,
+    relatedness: float = 0.0,
 ) -> int:
-    """Insert a chunk and its embedding. Returns the chunk id."""
+    """Insert a chunk and its embedding. Returns the chunk id.
+
+    SDT scores (autonomy / competence / relatedness) default to 0.0 — meaning
+    'not yet assessed'. Sleep-time scoring or `aie score` overrides these.
+    """
     ts = ts or _now()
     cur = conn.execute(
         """
-        INSERT INTO chunk (ts, ingested_ts, source, body, valence, weight, embedding_model)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO chunk (
+            ts, ingested_ts, source, body, valence, weight,
+            autonomy, competence, relatedness, embedding_model
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (ts, _now(), source, body, valence, weight, embedding_model),
+        (ts, _now(), source, body, valence, weight,
+         autonomy, competence, relatedness, embedding_model),
     )
     chunk_id = cur.lastrowid
     conn.execute(
@@ -118,6 +156,21 @@ def insert_chunk(
     )
     conn.commit()
     return chunk_id
+
+
+def record_sleep_event(conn: sqlite3.Connection, history_bytes: int,
+                       moments_stored: int, summary: Optional[str] = None,
+                       carry_forward: Optional[str] = None) -> int:
+    """Log a sleep/dreaming event for later auditing."""
+    cur = conn.execute(
+        """
+        INSERT INTO sleep_event (ts, history_bytes, moments_stored, summary, carry_forward)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (_now(), history_bytes, moments_stored, summary, carry_forward),
+    )
+    conn.commit()
+    return cur.lastrowid
 
 
 def set_valence(conn: sqlite3.Connection, chunk_id: int, valence: str,

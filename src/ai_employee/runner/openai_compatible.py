@@ -34,13 +34,23 @@ class OpenAICompatibleRunner:
             timeout=timeout,
         )
 
-    def run(self, system: str, user: str) -> RunResult:
+    def run(self, system: str, user: str,
+            history: list[dict] | None = None) -> RunResult:
+        """Call the model.
+
+        If `history` is provided, it's a list of {role, content} dicts in
+        OpenAI format that gets inserted between the system prompt and the
+        new user message. This is how conversation continuity is achieved
+        across ticks.
+        """
+        messages = [{"role": "system", "content": system}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": user})
+
         response = self.client.chat.completions.create(
             model=self.model_id,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            messages=messages,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
         )

@@ -38,9 +38,11 @@ class MockRunner:
     def __init__(self, response: str = "[REFLECTING 1]\n\nMocked tick."):
         self.response = response
         self.called = 0
+        self.last_history = None
 
-    def run(self, system: str, user: str) -> RunResult:
+    def run(self, system: str, user: str, history=None) -> RunResult:
         self.called += 1
+        self.last_history = history
         return RunResult(
             text=self.response,
             input_tokens=100,

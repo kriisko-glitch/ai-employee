@@ -12,6 +12,10 @@ agents/*/FREEZE
 agents/*/drafts/
 agents/*/budget.json
 agents/*/.session/
+agents/*/conversation.jsonl
+agents/*/conversation.jsonl.pre-sleep
+agents/*/last_seen.json
+agents/*/heartbeat.log
 
 # Allow the example skeleton
 !agents/example/SOUL.md
@@ -55,3 +59,4 @@ models/
 # Logs
 *.log
 logs/
+agents/mike-ross/
