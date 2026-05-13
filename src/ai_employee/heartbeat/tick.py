@@ -33,6 +33,7 @@ from ..conversation import (
     append_turn, load_recent, size_bytes, clear, to_message_list,
 )
 from ..prompt import build_prompt
+from ..response_parse import parse_response, ParsedResponse
 from ..runner import build_runner, Runner
 from ..transport import build_transport
 from .budget import BudgetTracker
@@ -41,23 +42,6 @@ from .modulation import compute_activity_multiplier
 from .state import load_state, update_state, write_state_atomic
 
 log = logging.getLogger(__name__)
-
-_STATE_HEADER_RE = re.compile(r"\[([A-Z_]+)\s+(\d+)\]")
-_NEXT_TICK_RE = re.compile(r"\[next_tick_seconds:\s*(\d+)\]", re.IGNORECASE)
-
-
-def _parse_response(text: str, default_state: str, default_intensity: int,
-                    default_delay: int) -> tuple[str, int, int]:
-    state, intensity = default_state, default_intensity
-    m = _STATE_HEADER_RE.search(text)
-    if m:
-        state = m.group(1)
-        intensity = int(m.group(2))
-    next_delay = default_delay
-    m2 = _NEXT_TICK_RE.search(text)
-    if m2:
-        next_delay = int(m2.group(1))
-    return state, intensity, next_delay
 
 
 def _clamp(value: int, lo: int, hi: int) -> int:
@@ -168,12 +152,10 @@ def _run_normal_tick(config, runner, tracker, state, frozen,
     result = runner.run(system, user, history=history)
     tracker.record(result.input_tokens, result.output_tokens)
 
-    new_state_name, new_intensity, next_delay = _parse_response(
-        result.text,
-        default_state=state.get("state", "BOREDOM"),
-        default_intensity=state.get("intensity", 1),
-        default_delay=config.heartbeat.cadence.default_seconds,
-    )
+    parsed = parse_response(result.text)
+    new_state_name = parsed.state or state.get("state", "BOREDOM")
+    new_intensity = parsed.intensity if parsed.intensity is not None else state.get("intensity", 1)
+    next_delay = parsed.next_tick_seconds or config.heartbeat.cadence.default_seconds
 
     # Modulation cascade.
     fs_mult = compute_activity_multiplier(config.workspace, config.heartbeat.modulation)
@@ -197,17 +179,20 @@ def _run_normal_tick(config, runner, tracker, state, frozen,
     if not frozen:
         write_state_atomic(config.state_file, new_state)
 
-        # Working memory: append user + assistant turn.
+        # Working memory: append the full raw response so the model sees its
+        # own prior reasoning (including [THINKING]) on the next tick.
         if config.conversation.enabled:
             user_for_log = extra_observation or "(tick — no operator input)"
             append_turn(config.conversation_file, "user", user_for_log, source="tick")
             append_turn(config.conversation_file, "assistant", result.text, source="tick")
 
-        # Long-term memory: ingest the response as a chunk (v0.1 behavior).
+        # Long-term memory: ingest the POST content only (the part that
+        # actually went to the channel) — not the inner monologue.
         if persist_memory and config.memory.enabled and config.memory.storage.backend == "sqlite_vec":
+            chunk_body = parsed.post if parsed.post else result.text
             try:
                 from ..memory.score import remember
-                remember(config.memory_db_file, result.text, config.memory,
+                remember(config.memory_db_file, chunk_body, config.memory,
                          source=f"tick:{new_state_name}")
             except Exception as e:
                 log.warning("Memory ingest failed: %s", e)
@@ -220,8 +205,14 @@ def _run_normal_tick(config, runner, tracker, state, frozen,
             except Exception as e:
                 log.warning("save_last_seen failed: %s", e)
 
-    transport = build_transport(config.transport, name=config.name)
-    transport.post(result.text)
+    # Post only the POST block — or skip entirely if the agent chose SILENT.
+    if parsed.is_silent:
+        log.info("agent chose SILENT — no post this tick")
+    elif parsed.post and parsed.post.strip():
+        transport = build_transport(config.transport, name=config.name)
+        transport.post(parsed.post)
+    else:
+        log.warning("no postable content extracted; skipping post")
     return new_state
 
 
@@ -306,14 +297,11 @@ def _run_wake_tick(config, runner, tracker, state, frozen, extra_observation) ->
     result = runner.run(system, user, history=None)
     tracker.record(result.input_tokens, result.output_tokens)
 
-    new_state_name, new_intensity, next_delay = _parse_response(
-        result.text,
-        default_state="REFLECTING",
-        default_intensity=1,
-        default_delay=240,
-    )
+    parsed = parse_response(result.text)
+    new_state_name = parsed.state or "REFLECTING"
+    new_intensity = parsed.intensity if parsed.intensity is not None else 1
     next_delay = _clamp(
-        next_delay,
+        parsed.next_tick_seconds or 240,
         config.heartbeat.cadence.min_seconds,
         config.heartbeat.cadence.max_seconds,
     )
@@ -329,15 +317,19 @@ def _run_wake_tick(config, runner, tracker, state, frozen, extra_observation) ->
 
     if not frozen:
         write_state_atomic(config.state_file, new_state)
-        # Seed the new conversation with this wake turn.
         if config.conversation.enabled:
             append_turn(config.conversation_file, "user",
                         "wake from sleep", source="tick")
             append_turn(config.conversation_file, "assistant",
                         result.text, source="tick")
 
-    transport = build_transport(config.transport, name=config.name)
-    transport.post(result.text)
+    if parsed.is_silent:
+        log.info("wake tick chose SILENT — no post")
+    elif parsed.post and parsed.post.strip():
+        transport = build_transport(config.transport, name=config.name)
+        transport.post(parsed.post)
+    else:
+        log.warning("wake tick produced no postable content")
     return new_state
 
 
