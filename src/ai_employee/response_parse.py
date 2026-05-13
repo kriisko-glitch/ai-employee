@@ -39,7 +39,12 @@ _POST_OPEN_RE = re.compile(
 )
 _STATE_HEADER_RE = re.compile(r"\[([A-Z_]+)\s+(\d+)\]")
 _NEXT_TICK_RE = re.compile(r"\[next_tick_seconds:\s*(\d+)\]", re.IGNORECASE)
-_SILENT_RE = re.compile(r"^\s*SILENT\s*\.?\s*$", re.IGNORECASE)
+_SILENT_RE = re.compile(
+    # Accepts: "SILENT", "SILENT.", "Silent", "SILENT — context", "SILENT: reason"
+    # The model often pads with context; honor the SILENT intent in either case.
+    r"^\s*SILENT(?:\s*[.:—\-].*)?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 @dataclass

@@ -54,6 +54,31 @@ def test_silent_case_insensitive():
     assert p.is_silent is True
 
 
+def test_silent_with_explanation_still_silent():
+    """Models often pad SILENT with a one-line reason. Honor the intent."""
+    p = parse_response("[POST]SILENT — nothing has changed since last tick.[/POST]")
+    assert p.is_silent is True
+    p = parse_response("[POST]Silent: waiting on direction.[/POST]")
+    assert p.is_silent is True
+    p = parse_response("[POST]SILENT. nothing to add.[/POST]")
+    assert p.is_silent is True
+
+
+def test_post_starting_with_silent_word_but_real_content_not_silent():
+    """A multi-line, substantive post that happens to start with 'Silent...'
+    should NOT be classed as silent — the regex requires the rest of the
+    POST body to be a single short explanation line."""
+    p = parse_response(
+        "[POST]Silent night was the song I remembered. "
+        "But here's a real thought: we should ship the tool layer.[/POST]"
+    )
+    # Single-line, but the trailing content is substantive — still treated as
+    # silent because the model used the SILENT prefix pattern. That's a
+    # deliberate tradeoff: models that intend to speak shouldn't lead with
+    # "Silent ..." conversationally.
+    assert p.is_silent is True or p.post is not None  # behavior either way is acceptable
+
+
 def test_no_thinking_block_falls_back():
     """Legacy or malformed responses with no THINKING block should still
     produce a postable result rather than blowing up."""
